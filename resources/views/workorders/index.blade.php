@@ -145,6 +145,9 @@
                                     <div class="col-md-6">
                                         <strong>Estatus :</strong> <span id="status"></span>
                                     </div>
+                                    <div class="col-md-12">
+                                        <strong>Detalles :</strong> <span id="detalles"></span>
+                                    </div>
                                     <hr>
                                     <div class="w-100"></div>
                                     <div class="col-md-12 text-center">
@@ -373,6 +376,8 @@
                 .replace(':id', id),
             type: 'GET',
             success: function(res) {
+                console.log(res);
+
                 $('#name').text(res.customer.name);
                 $('#date').text(moment(res.created_at).format('DD/MM/YYYY hh:mm A'));
                 $('#totals').text(numberFormat2.format(res.total));
@@ -382,7 +387,7 @@
                 $('#marca').text(res.marca);
                 $('#patente').text(res.patente_vehiculo);
                 $('#modelo').text(res.modelo);
-
+                $('#detalles').text(res.details);
 
                 $('#details').empty();
 

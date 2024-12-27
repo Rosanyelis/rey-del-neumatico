@@ -93,7 +93,7 @@
                         toast.onmouseleave = Swal.resumeTimer;
                     }
                 });
-
+                @if (url()->current() != route('monitor.index'))
                 @if (count($productsQty) > 0)
                 Toast.fire({
                     icon: "error",
@@ -101,7 +101,7 @@
                     text: "Por favor revisa las notificaciones y reponga el inventario"
                 });
                 @endif
-
+                @endif
                 @if (session('success'))
                 Toast.fire({
                     icon: "success",

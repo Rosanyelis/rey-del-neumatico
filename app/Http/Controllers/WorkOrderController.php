@@ -118,6 +118,7 @@ class WorkOrderController extends Controller
             'modelo'         => $request->modelo,
             'patente_vehiculo' => $request->patente_vehiculo,
             'total'          => $request->total,
+            'details'         => $request->details,
         ]);
 
         foreach ($productos as $key) {
@@ -130,10 +131,7 @@ class WorkOrderController extends Controller
                 'price'          => $key->cost,
                 'total'          => $key->total,
             ]);
-
-
         }
-
 
         return redirect()->route('ordenes-trabajo.index')->with('success', 'Orden de Trabajo Creada Correctamente');
     }
@@ -170,8 +168,9 @@ class WorkOrderController extends Controller
             'user_id'        => auth()->user()->id,
             'marca'          => $request->marca,
             'modelo'         => $request->modelo,
-            'patente_vehiculo' => $request->patente_vehiculo,
-            'total'          => $request->total,
+            'patente_vehiculo'  => $request->patente_vehiculo,
+            'total'             => $request->total,
+            'details'           => $request->detalles,
         ]);
 
         $workorder->items()->delete();
@@ -197,26 +196,7 @@ class WorkOrderController extends Controller
     public function destroy(Request $request)
     {
         $workOrder = WorkOrder::find($request->id);
-        if ($request->status == 'Completado') {
-            foreach($workOrder->items as $key){
-                $product = Product::find($key->product_id);
 
-                $productqty = ProductStoreQty::where('product_id', $product->id)->first();
-                $habian = $productqty->quantity;
-                $salieron = $key->quantity;
-                $quedan = $habian - $salieron;
-                if ($productqty->quantity < $key->quantity) {
-                    return redirect()->route('ordenes-trabajo.index')->with('error', 'Oops.. Para cambiar el estado a completado, debe haber suficiente stock para los productos de la OT, verifique su inventario.');
-                }
-                $productqty->quantity = $productqty->quantity - $key->quantity;
-                $productqty->save();
-
-                # ingresamos informacion en kardex del producto
-                
-
-            }
-
-        }
         $workOrder->update([
             'status' => $request->status
         ]);

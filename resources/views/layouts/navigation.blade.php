@@ -17,6 +17,13 @@
                                 </a>
                             </li>
 
+                            <li>
+                                <a href="{{ route('monitor.index') }}">
+                                    <i data-feather="airplay"></i>
+                                    <span data-key="t-monitor">Monitor</span>
+                                </a>
+                            </li>
+
                             <li class="menu-title" data-key="t-apps">Admin</li>
 
                             <li>

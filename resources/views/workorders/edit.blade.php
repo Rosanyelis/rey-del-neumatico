@@ -54,6 +54,16 @@
                             </div>
                         </div>
 
+                        <div class="col-lg-8 col-md-8 col-sm-6">
+                            <div class="mb-3">
+                                <label for="customer" class="form-label">Detalles de orden de trabajo</label>
+                                <input type="text" class="form-control" name="detalles" id="detalles" value="{{ $workOrder->detalles }}">
+                                @if ($errors->has('detalles'))
+                                <div class="invalid-feedback">{{ $errors->first('detalles') }}</div>
+                                @endif
+                            </div>
+                        </div>
+
                         <div class="w-100"></div>
                         <hr>
                         <div class="col-lg-4 col-md-4 col-sm-6">

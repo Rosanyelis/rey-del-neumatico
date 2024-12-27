@@ -332,11 +332,13 @@
             },
             {
                 data: 'payment_method',
-                name: 'payment_method'
+                name: 'payment_method',
+                searchable: false
             },
             {
                 data: 'user_name',
-                name: 'user_name'
+                name: 'user_name',
+                searchable: false
             },
             {
                 data: 'actions',

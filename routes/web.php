@@ -6,7 +6,9 @@ use App\Http\Controllers\RolController;
 use App\Http\Controllers\SaleController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\StoreController;
+use App\Http\Controllers\KardexController;
 use App\Http\Controllers\ExpenseController;
+use App\Http\Controllers\MonitorController;
 use App\Http\Controllers\ProductController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\ReportsController;
@@ -17,7 +19,6 @@ use App\Http\Controllers\SupplierController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\QuotationController;
 use App\Http\Controllers\WorkOrderController;
-use App\Http\Controllers\KardexController;
 
 Route::get('/', function () {
     return redirect()->route('login');
@@ -196,6 +197,8 @@ Route::middleware('auth')->group(function () {
     Route::get('/ordenes-trabajo/{workOrder}/enviar-orden-de-trabajo', [WorkOrderController::class, 'sendEmailWorkorderpdf'])->name('ordenes-trabajo.sendEmailWorkorderpdf');
     Route::post('/ordenes-trabajo/productjson', [WorkOrderController::class, 'productjson'])->name('ordenes-trabajo.productjson');
 
+    # Ordenes de Trabajo - monitor
+    Route::get('/monitor', [MonitorController::class, 'index'])->name('monitor.index');
 
     # Reportes
     Route::get('/informe-de-ventas', [ReportsController::class, 'informeventas'])->name('reportes.informeventas');

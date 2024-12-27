@@ -42,96 +42,121 @@ class SaleController extends Controller
      * @return \Illuminate\Http\JsonResponse The data table response.
      */
     public function datatable(Request $request)
-    {
-        if ($request->ajax()) {
-            $data = DB::table('sales')
-                ->join('users', 'users.id', '=', 'sales.user_id')
-                ->leftjoin('sale_payments', 'sales.id', '=', 'sale_payments.sale_id')
-                ->select('sales.*', 'users.name AS user_name',
-                        DB::raw("GROUP_CONCAT(sale_payments.payment_method SEPARATOR ', ') AS payment_method"))
-                ->groupBy('sales.id', 'sales.created_at', 'sales.customer_name', 'sales.grand_total', 'users.name')
-                ->orderBy('id', 'desc');
-            return DataTables::of($data)
-                ->filter(function ($query) use ($request) {
-                    if ($request->has('user_id') && $request->get('user_id') != 'Todos') {
-                        $query->where('sales.user_id', $request->get('user_id'));
-                    }
+{
+    if ($request->ajax()) {
+        // Seleccionar solo las columnas necesarias
+        $query = Sale::query()
+            ->select([
+                'sales.id',
+                'sales.created_at',
+                'sales.customer_name',
+                'sales.grand_total',
+                'sales.payment_status',
+                'users.name AS user_name',
+                DB::raw("GROUP_CONCAT(sale_payments.payment_method SEPARATOR ', ') AS payment_method"),
+            ])
+            ->join('users', 'users.id', '=', 'sales.user_id')
+            ->leftJoin('sale_payments', 'sales.id', '=', 'sale_payments.sale_id')
+            ->groupBy('sales.id', 'sales.created_at', 'sales.customer_name',
+                'sales.grand_total', 'sales.payment_status', 'users.name');
 
-                    if ($request->has('day') && $request->get('day') != '') {
-                        $query->whereDate('sales.created_at', '=', $request->get('day'));
-                    }
-
-                    if ($request->has('search') && $request->get('search')['value'] != '') {
-                        $searchValue = $request->get('search')['value'];
-                        $query->where(function ($subQuery) use ($searchValue) {
-                            $subQuery->where('users.name', 'like', "%{$searchValue}%")
-                                     ->orWhere('sales.customer_name', 'like', "%{$searchValue}%")
-                                     ->orWhere('sales.payment_status', 'like', "%{$searchValue}%");
-                        });
-                    }
-                })
-                ->addColumn('actions', function ($data) {
-                    return view('sales.partials.actions', ['id' => $data->id]);
-                })
-                ->rawColumns(['actions'])
-                ->make(true);
+        // Filtros dinámicos
+        if ($request->has('user_id') && $request->get('user_id') != 'Todos') {
+            $query->where('sales.user_id', $request->get('user_id'));
         }
+
+        if ($request->has('day') && $request->get('day') != '') {
+            $query->whereDate('sales.created_at', $request->get('day'));
+        }
+
+        if ($request->has('search') && $request->get('search')['value'] != '') {
+            $searchValue = $request->get('search')['value'];
+            $query->where(function ($subQuery) use ($searchValue) {
+                $subQuery->where('users.name', 'like', "%{$searchValue}%") // Cambiado 'user_name' por 'users.name'
+                         ->orWhere('sales.customer_name', 'like', "%{$searchValue}%")
+                         ->orWhere('sales.payment_status', 'like', "%{$searchValue}%")
+                         ->orWhere('sales.grand_total', 'like', "%{$searchValue}%");
+            });
+        }
+
+        return DataTables::of($query)
+            ->addColumn('actions', function ($data) {
+                // Renderizar botones de acción
+                return view('sales.partials.actions', ['id' => $data->id])->render();
+            })
+            ->rawColumns(['actions'])
+            ->make(true);
     }
+}
+
+
 
     public function totalSales(Request $request)
     {
         if ($request->ajax()) {
-            $object = Sale::where(function ($query) use ($request) {
+            // Función para agregar filtros dinámicos
+            $applyFilters = function ($query) use ($request) {
                 if ($request->has('day') && $request->get('day') != '') {
                     $query->whereDate('sales.created_at', '=', $request->get('day'));
                 }
                 if ($request->has('user_id') && $request->get('user_id') != 'Todos') {
                     $query->where('sales.user_id', $request->get('user_id'));
                 }
-            })->get();
-            $total = 0; $totalefectivo = 0; $totalcredito = 0; $totalcheque = 0;
-            $totaltransferencia = 0; $totalpropina = 0;
-            foreach ($object as $sale) {
-                $total += $sale->grand_total;
-                $totalpropina += $sale->perquisite;
-            }
+            };
+
+            // Consulta para totales de ventas y propinas
+            $totals = Sale::selectRaw('SUM(grand_total) as total, SUM(perquisite) as totalpropina')
+                ->where($applyFilters)
+                ->first();
+
+            $total = $totals->total ?? 0;
+            $totalpropina = $totals->totalpropina ?? 0;
+
+            // Consulta para totales por método de pago
             $payments = DB::table('sales')
-                    ->join('sale_payments', 'sales.id', '=', 'sale_payments.sale_id')
-                    ->select(DB::raw('SUM(sale_payments.amount) AS total'), 'sale_payments.payment_method')
-                    ->groupBy('sale_payments.payment_method')
-                    ->where(function ($query) use ($request) {
-                        if ($request->has('day') && $request->get('day') != '') {
-                            $query->whereDate('sales.created_at', '=', $request->get('day'));
-                        }
-                        if ($request->has('user_id') && $request->get('user_id') != 'Todos') {
-                            $query->where('sales.user_id', $request->get('user_id'));
-                        }
-                    })
-                    ->get();
+                ->join('sale_payments', 'sales.id', '=', 'sale_payments.sale_id')
+                ->selectRaw('SUM(sale_payments.amount) AS total, sale_payments.payment_method')
+                ->where($applyFilters)
+                ->groupBy('sale_payments.payment_method')
+                ->get();
+
+            // Inicialización de totales por método de pago
+            $totalefectivo = 0;
+            $totalcredito = 0;
+            $totalcheque = 0;
+            $totaltransferencia = 0;
 
             foreach ($payments as $key) {
-                if ($key->payment_method == 'Efectivo') {
-                    $totalefectivo = floatval($key->total);
-                } else if ($key->payment_method == 'Tarjeta de credito') {
-                    $totalcredito = floatval($key->total);
-                } else if ($key->payment_method == 'Cheque') {
-                    $totalcheque = floatval($key->total);
-                } else if ($key->payment_method == 'Transferencia') {
-                    $totaltransferencia = floatval($key->total);
+                switch ($key->payment_method) {
+                    case 'Efectivo':
+                        $totalefectivo = floatval($key->total);
+                        break;
+                    case 'Tarjeta de credito':
+                        $totalcredito = floatval($key->total);
+                        break;
+                    case 'Cheque':
+                        $totalcheque = floatval($key->total);
+                        break;
+                    case 'Transferencia':
+                        $totaltransferencia = floatval($key->total);
+                        break;
                 }
             }
 
+            // Preparar respuesta
             $data = [
                 'total' => $total,
                 'totalefectivo' => $totalefectivo,
                 'totalcredito' => $totalcredito,
                 'totalcheque' => $totalcheque,
                 'totaltransferencia' => $totaltransferencia,
-                'totalpropina' => $totalpropina
+                'totalpropina' => $totalpropina,
             ];
+
             return response()->json($data);
         }
     }
+
     /**
      * Generates an informe based on the given request parameters.
      *
@@ -141,24 +166,29 @@ class SaleController extends Controller
      * @param Request $request The request object containing the day and user id parameters.
      * @return \Illuminate\Http\Response A PDF response with the generated informe.
      */
-    public function generateInforme( Request $request )
+    public function generateInforme(Request $request)
     {
+        // Filtros dinámicos
+        $filters = function ($query) use ($request) {
+            if ($request->has('day') && $request->get('day') != '') {
+                $query->whereDate('sales.created_at', '=', $request->get('day'));
+            }
+            if ($request->has('user_id') && $request->get('user_id') != 'Todos') {
+                $query->where('sales.user_id', $request->get('user_id'));
+            }
+        };
 
-        $sales = Sale::join('users', 'sales.user_id', '=', 'users.id')
-                ->select('sales.*', 'users.name as user_name')
-                ->where(function ($query) use ($request) {
-                    if ($request->has('day') && $request->get('day') != '') {
-                        $query->whereDate('sales.created_at', '=', $request->get('day'));
-                    }
-                    if ($request->has('user_id') && $request->get('user_id') != 'Todos') {
-                        $query->where('user_id', $request->get('user_id'));
-                    }
-                })
-                ->get();
+        // Consulta optimizada con relaciones necesarias
+        $sales = Sale::with(['user', 'payments'])
+            ->select('sales.*')
+            ->where($filters)
+            ->get();
 
-        $vendedor = ($request->get('user_id') == 'Todos' ? '' : User::find($request->get('user_id'))->name);
+        // Datos generales
+        $vendedor = $request->get('user_id') == 'Todos' ? '' : User::find($request->get('user_id'))->name;
         $dia = $request->get('day');
-        $informe = [];
+
+        // Inicialización de totales
         $total = 0;
         $propina = 0;
         $efectivo = 0;
@@ -166,49 +196,55 @@ class SaleController extends Controller
         $cheque = 0;
         $transferencia = 0;
 
-        foreach ($sales as $sale) {
-            $informe[] = [
-                'id'        => $sale->id,
-                'fecha'     => Carbon::parse($sale->created_at)->format('d/m/Y'),
-                'cliente'   => $sale->customer_name,
-                'vendedor'  => $sale->user_name,
-                'propina'   => $sale->perquisite,
-                'total'     => $sale->grand_total,
-            ];
+        // Informe de ventas
+        $informe = $sales->map(function ($sale) use (&$total, &$propina) {
             $total += $sale->grand_total;
             $propina += $sale->perquisite;
 
-            $payments = DB::table('sales')
-                ->join('sale_payments', 'sales.id', '=', 'sale_payments.sale_id')
-                ->select(DB::raw('SUM(sale_payments.pos_paid) AS total'), 'sale_payments.payment_method')
-                ->groupBy('sale_payments.payment_method')
-                ->where(function ($query) use ($request) {
-                    if ($request->has('day') && $request->get('day') != '') {
-                        $query->whereDate('sales.created_at', '=', $request->get('day'));
-                    }
-                    if ($request->has('user_id') && $request->get('user_id') != 'Todos') {
-                        $query->where('sales.user_id', $request->get('user_id'));
-                    }
-                })
-                ->get();
+            return [
+                'id' => $sale->id,
+                'fecha' => Carbon::parse($sale->created_at)->format('d/m/Y'),
+                'cliente' => $sale->customer_name,
+                'vendedor' => $sale->user->name ?? '',
+                'propina' => $sale->perquisite,
+                'total' => $sale->grand_total,
+            ];
+        });
 
-                foreach ($payments as $key) {
-                    if ($key->payment_method == 'Efectivo') {
-                        $efectivo = floatval($key->total);
-                    } else if ($key->payment_method == 'Tarjeta de credito') {
-                        $credito = floatval($key->total);
-                    } else if ($key->payment_method == 'Cheque') {
-                        $cheque = floatval($key->total);
-                    } else if ($key->payment_method == 'Transferencia') {
-                        $transferencia = floatval($key->total);
-                    }
-                }
+        // Totales por método de pago
+        $payments = DB::table('sales')
+            ->join('sale_payments', 'sales.id', '=', 'sale_payments.sale_id')
+            ->select(DB::raw('SUM(sale_payments.pos_paid) AS total'), 'sale_payments.payment_method')
+            ->where($filters)
+            ->groupBy('sale_payments.payment_method')
+            ->get();
+
+        foreach ($payments as $key) {
+            switch ($key->payment_method) {
+                case 'Efectivo':
+                    $efectivo = floatval($key->total);
+                    break;
+                case 'Tarjeta de credito':
+                    $credito = floatval($key->total);
+                    break;
+                case 'Cheque':
+                    $cheque = floatval($key->total);
+                    break;
+                case 'Transferencia':
+                    $transferencia = floatval($key->total);
+                    break;
+            }
         }
 
-        return Pdf::loadView('pdfs.informesales', compact('informe', 'total', 'propina',
-            'efectivo', 'credito', 'cheque', 'transferencia', 'dia', 'vendedor'))
-            ->stream(''.config('app.name', 'Laravel').'- Informe de ventas por vendedor y dia - '. Carbon::now('America/Santiago')->format('d/m/Y'). '.pdf');
+        // Generar PDF
+        return Pdf::loadView(
+            'pdfs.informesales',
+            compact('informe', 'total', 'propina', 'efectivo', 'credito', 'cheque', 'transferencia', 'dia', 'vendedor')
+        )->stream(
+            config('app.name', 'Laravel') . '- Informe de ventas por vendedor y dia - ' . Carbon::now('America/Santiago')->format('d/m/Y') . '.pdf'
+        );
     }
+
     /**
      * Handles the index2 request for sales.
      *
@@ -233,38 +269,51 @@ class SaleController extends Controller
     public function datatablexmonth(Request $request)
     {
         if ($request->ajax()) {
+            // Construcción inicial de la consulta
             $data = DB::table('sales')
                 ->join('users', 'users.id', '=', 'sales.user_id')
                 ->join('sale_payments', 'sales.id', '=', 'sale_payments.sale_id')
-                ->select('sales.*', 'users.name AS user_name', DB::raw("GROUP_CONCAT(sale_payments.payment_method SEPARATOR ', ') AS payment_method"))
-                ->groupBy('sales.id', 'sales.created_at', 'sales.customer_name', 'sales.grand_total', 'users.name')
-                ->orderBy('id', 'desc');
+                ->select(
+                    'sales.id',
+                    'sales.created_at',
+                    'sales.customer_name',
+                    'sales.grand_total',
+                    'sales.payment_status',
+                    'users.name AS user_name',
+                    DB::raw("GROUP_CONCAT(DISTINCT sale_payments.payment_method SEPARATOR ', ') AS payment_method")
+                )
+                ->groupBy('sales.id', 'sales.created_at', 'sales.customer_name', 'sales.grand_total', 'sales.payment_status', 'users.name')
+                ->orderBy('sales.id', 'desc');
+
+            // Aplicar filtros según los parámetros recibidos
+            if ($request->has('user_id') && $request->get('user_id') != 'Todos') {
+                $data->where('sales.user_id', $request->get('user_id'));
+            }
+
+            if ($request->has('month') && $request->get('month') != '') {
+                $data->whereMonth('sales.created_at', '=', $request->get('month'));
+            }
+
+            if ($request->has('search') && $request->get('search')['value'] != '') {
+                $searchValue = $request->get('search')['value'];
+                $data->where(function ($query) use ($searchValue) {
+                    $query->where('users.name', 'like', "%{$searchValue}%")
+                          ->orWhere('sales.customer_name', 'like', "%{$searchValue}%")
+                          ->orWhere('sales.payment_status', 'like', "%{$searchValue}%");
+                });
+            }
+
+            // Configuración de DataTables
             return DataTables::of($data)
-                ->filter(function ($query) use ($request) {
-                    if ($request->has('user_id') && $request->get('user_id') != 'Todos') {
-                        $query->where('sales.user_id', $request->get('user_id'));
-                    }
-
-                    if ($request->has('month') && $request->get('month') != '') {
-                        $query->whereMonth('sales.created_at', '=', $request->get('month'));
-                    }
-
-                    if ($request->has('search') && $request->get('search')['value'] != '') {
-                        $searchValue = $request->get('search')['value'];
-                        $query->where(function ($subQuery) use ($searchValue) {
-                            $subQuery->where('users.name', 'like', "%{$searchValue}%")
-                                     ->orWhere('sales.customer_name', 'like', "%{$searchValue}%")
-                                     ->orWhere('sales.payment_status', 'like', "%{$searchValue}%");
-                        });
-                    }
-                })
                 ->addColumn('actions', function ($data) {
+                    // Renderizado de las acciones usando un componente parcial
                     return view('sales.partials.actions', ['id' => $data->id]);
                 })
-                ->rawColumns(['actions'])
+                ->rawColumns(['actions']) // Permitir HTML en la columna 'actions'
                 ->make(true);
         }
     }
+
     /**
      * Handles an AJAX request to retrieve total sales data for a given month.
      *
@@ -274,126 +323,116 @@ class SaleController extends Controller
     public function totalSalesxmonth(Request $request)
     {
         if ($request->ajax()) {
-            $object = Sale::where(function ($query) use ($request) {
-                if ($request->has('month') && $request->get('month') != '') {
-                    $query->whereMonth('sales.created_at', '=', $request->get('month'));
-                }
-                if ($request->has('user_id') && $request->get('user_id') != 'Todos') {
-                    $query->where('sales.user_id', $request->get('user_id'));
-                }
-            })->get();
-            $total = 0;
-            $totalefectivo = 0;
-            $totalcredito = 0;
-            $totalcheque = 0;
-            $totaltransferencia = 0;
-            $totalpropina = 0;
-            foreach ($object as $sale) {
-                $total += $sale->grand_total;
-                $totalpropina += $sale->perquisite;
-            }
-            $payments = DB::table('sales')
-                    ->join('sale_payments', 'sales.id', '=', 'sale_payments.sale_id')
-                    ->select(DB::raw('SUM(sale_payments.amount) AS total'), 'sale_payments.payment_method')
-                    ->groupBy('sale_payments.payment_method')
-                    ->where(function ($query) use ($request) {
-                        if ($request->has('month') && $request->get('month') != '') {
-                            $query->whereMonth('sales.created_at', '=', $request->get('month'));
-                        }
-                        if ($request->has('user_id') && $request->get('user_id') != 'Todos') {
-                            $query->where('sales.user_id', $request->get('user_id'));
-                        }
-                    })
-                    ->get();
+            // Consulta principal para obtener totales
+            $salesQuery = DB::table('sales')
+                ->join('sale_payments', 'sales.id', '=', 'sale_payments.sale_id')
+                ->select(
+                    DB::raw('SUM(sales.grand_total) AS total'),
+                    DB::raw('SUM(sales.perquisite) AS totalpropina'),
+                    DB::raw('SUM(CASE WHEN sale_payments.payment_method = "Efectivo" THEN sale_payments.amount ELSE 0 END) AS totalefectivo'),
+                    DB::raw('SUM(CASE WHEN sale_payments.payment_method = "Tarjeta de credito" THEN sale_payments.amount ELSE 0 END) AS totalcredito'),
+                    DB::raw('SUM(CASE WHEN sale_payments.payment_method = "Cheque" THEN sale_payments.amount ELSE 0 END) AS totalcheque'),
+                    DB::raw('SUM(CASE WHEN sale_payments.payment_method = "Transferencia" THEN sale_payments.amount ELSE 0 END) AS totaltransferencia')
+                );
 
-            foreach ($payments as $key) {
-                if ($key->payment_method == 'Efectivo') {
-                    $totalefectivo = floatval($key->total);
-                } else if ($key->payment_method == 'Tarjeta de credito') {
-                    $totalcredito = floatval($key->total);
-                } else if ($key->payment_method == 'Cheque') {
-                    $totalcheque = floatval($key->total);
-                } else if ($key->payment_method == 'Transferencia') {
-                    $totaltransferencia = floatval($key->total);
-                }
+            // Aplicar filtros según parámetros
+            if ($request->has('month') && $request->get('month') != '') {
+                $salesQuery->whereMonth('sales.created_at', '=', $request->get('month'));
+            }
+            if ($request->has('user_id') && $request->get('user_id') != 'Todos') {
+                $salesQuery->where('sales.user_id', $request->get('user_id'));
             }
 
+            // Ejecutar la consulta
+            $salesData = $salesQuery->first();
+
+            // Preparar respuesta con valores calculados
             $data = [
-                'total' => $total,
-                'totalefectivo' => $totalefectivo,
-                'totalcredito' => $totalcredito,
-                'totalcheque' => $totalcheque,
-                'totaltransferencia' => $totaltransferencia,
-                'totalpropina' => $totalpropina
+                'total' => $salesData->total ?? 0,
+                'totalefectivo' => $salesData->totalefectivo ?? 0,
+                'totalcredito' => $salesData->totalcredito ?? 0,
+                'totalcheque' => $salesData->totalcheque ?? 0,
+                'totaltransferencia' => $salesData->totaltransferencia ?? 0,
+                'totalpropina' => $salesData->totalpropina ?? 0,
             ];
+
             return response()->json($data);
         }
     }
-    public function generateInformexmes( Request $request )
+
+    public function generateInformexmes(Request $request)
     {
-        $informe            = [];
-        $total              = 0;
-        $totalefectivo      = 0;
-        $totalcredito       = 0;
-        $totalcheque        = 0;
+        $total = 0;
+        $totalefectivo = 0;
+        $totalcredito = 0;
+        $totalcheque = 0;
         $totaltransferencia = 0;
-        $totalpropina       = 0;
-        $mes                = ($request->get('month')) ? Carbon::createFromFormat('!m', $request->get('month'))->translatedFormat('F') : '';
-        $vendedor           = ($request->get('user_id') != 'Todos') ? User::find($request->get('user_id'))->name : 'Todos';
+        $totalpropina = 0;
+        $mes = $request->get('month')
+            ? Carbon::createFromFormat('!m', $request->get('month'))->translatedFormat('F')
+            : '';
+        $vendedor = ($request->get('user_id') != 'Todos')
+            ? User::find($request->get('user_id'))->name
+            : 'Todos';
 
-        $data = Sale::where(function ($query) use ($request) {
-            if ($request->has('month') && $request->get('month') != '') {
+        // Consulta consolidada para obtener ventas y totales por método de pago
+        $salesData = DB::table('sales')
+            ->leftJoin('users', 'sales.user_id', '=', 'users.id')
+            ->leftJoin('sale_payments', 'sales.id', '=', 'sale_payments.sale_id')
+            ->select(
+                'sales.id',
+                'sales.created_at',
+                'sales.customer_name',
+                'users.name AS user_name',
+                'sales.perquisite',
+                'sales.grand_total',
+                DB::raw('SUM(CASE WHEN sale_payments.payment_method = "Efectivo" THEN sale_payments.pos_paid ELSE 0 END) AS totalefectivo'),
+                DB::raw('SUM(CASE WHEN sale_payments.payment_method = "Tarjeta de credito" THEN sale_payments.pos_paid ELSE 0 END) AS totalcredito'),
+                DB::raw('SUM(CASE WHEN sale_payments.payment_method = "Cheque" THEN sale_payments.pos_paid ELSE 0 END) AS totalcheque'),
+                DB::raw('SUM(CASE WHEN sale_payments.payment_method = "Transferencia" THEN sale_payments.pos_paid ELSE 0 END) AS totaltransferencia')
+            )
+            ->when($request->get('month'), function ($query) use ($request) {
                 $query->whereMonth('sales.created_at', '=', $request->get('month'));
-            }
-            if ($request->has('user_id') && $request->get('user_id') != 'Todos') {
-                $query->where('sales.user_id', $request->get('user_id'));
-            }
-        })->get();
+            })
+            ->when($request->get('user_id') != 'Todos', function ($query) use ($request) {
+                $query->where('sales.user_id', '=', $request->get('user_id'));
+            })
+            ->groupBy('sales.id', 'sales.created_at', 'sales.customer_name', 'users.name', 'sales.perquisite', 'sales.grand_total')
+            ->get();
 
-        foreach ($data as $sale) {
-            $informe[] = [
-                'id'        => $sale->id,
-                'fecha'     => Carbon::parse($sale->created_at)->format('d/m/Y'),
-                'cliente'   => $sale->customer_name,
-                'vendedor'  => $sale->user_name,
-                'propina'   => $sale->perquisite,
-                'total'     => $sale->grand_total,
-            ];
+        // Preparar datos para el informe
+        $informe = $salesData->map(function ($sale) use (&$total, &$totalpropina, &$totalefectivo, &$totalcredito, &$totalcheque, &$totaltransferencia) {
             $total += $sale->grand_total;
             $totalpropina += $sale->perquisite;
+            $totalefectivo += $sale->totalefectivo;
+            $totalcredito += $sale->totalcredito;
+            $totalcheque += $sale->totalcheque;
+            $totaltransferencia += $sale->totaltransferencia;
 
-            $payments = DB::table('sales')
-                ->join('sale_payments', 'sales.id', '=', 'sale_payments.sale_id')
-                ->select(DB::raw('SUM(sale_payments.pos_paid) AS total'), 'sale_payments.payment_method')
-                ->where(function ($query) use ($request) {
-                    if ($request->has('month') && $request->get('month') != '') {
-                        $query->whereMonth('sales.created_at', '=', $request->get('month'));
-                    }
-                    if ($request->has('user_id') && $request->get('user_id') != 'Todos') {
-                        $query->where('sales.user_id', $request->get('user_id'));
-                    }
-                })
-                ->groupBy('sale_payments.payment_method')
-                ->get();
+            return [
+                'id' => $sale->id,
+                'fecha' => Carbon::parse($sale->created_at)->format('d/m/Y'),
+                'cliente' => $sale->customer_name,
+                'vendedor' => $sale->user_name,
+                'propina' => $sale->perquisite,
+                'total' => $sale->grand_total,
+            ];
+        })->toArray();
 
-            foreach ($payments as $key) {
-                if ($key->payment_method == 'Efectivo') {
-                    $totalefectivo = $key->total;
-                } else if ($key->payment_method == 'Tarjeta de credito') {
-                    $totalcredito = $key->total;
-                } else if ($key->payment_method == 'Cheque') {
-                    $totalcheque = $key->total;
-                } else if ($key->payment_method == 'Transferencia') {
-                    $totaltransferencia = $key->total;
-                }
-            }
-
-        }
-        return Pdf::loadView('pdfs.informesalesmonth',
-                    compact('informe', 'total', 'totalefectivo', 'totalcredito',
-                        'totalcheque', 'totaltransferencia', 'totalpropina', 'mes', 'vendedor'))
-                ->stream(''.config('app.name', 'Laravel').'- Informe de ventas por vendedor y mes - '. Carbon::now('America/Santiago')->format('d/m/Y'). '.pdf');
+        // Generar el PDF
+        return Pdf::loadView('pdfs.informesalesmonth', compact(
+            'informe',
+            'total',
+            'totalefectivo',
+            'totalcredito',
+            'totalcheque',
+            'totaltransferencia',
+            'totalpropina',
+            'mes',
+            'vendedor'
+        ))->stream('' . config('app.name', 'Laravel') . '- Informe de ventas por vendedor y mes - ' . Carbon::now('America/Santiago')->format('d/m/Y') . '.pdf');
     }
+
     /**
      * Handles the indexrange request for sales.
      *
